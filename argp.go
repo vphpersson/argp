@@ -758,15 +758,15 @@ func (argp *Argp) parse(args []string) (*Argp, []string, error) {
 		v.isSet = true
 		index++
 	}
-	for _, v := range argp.vars {
-		if v.Index != -1 && index <= v.Index && v.Default == nil {
-			name := v.Name
-			if name == "" {
-				name = strconv.Itoa(index)
-			}
-			return argp, nil, fmt.Errorf("argument %v is missing", name)
-		}
-	}
+	//for _, v := range argp.vars {
+	//	if v.Index != -1 && index <= v.Index && v.Default == nil {
+	//		name := v.Name
+	//		if name == "" {
+	//			name = strconv.Itoa(index)
+	//		}
+	//		return argp, nil, fmt.Errorf("argument %v is missing", name)
+	//	}
+	//}
 
 	// rest arguments
 	v := argp.findRest()

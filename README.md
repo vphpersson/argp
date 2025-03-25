@@ -22,14 +22,16 @@ GNU command line argument rules:
 - options may appear in any order
 - the argument `--` terminates all options so that all following arguments are treated as non-options
 - an argument value of `-` is allowed, usually used to mean standard in or out streams
+- options may be specified multiple times, only the last one determines its value
 
 Additional features:
 
-- options may be specified multiple times, only the last one determines its value
-- counting options are supported: `-vvv` sets `v = 3`
+- counting options: `-vvv` sets `v = 3`
+- appending options: `-v 1 -v 2` sets `v = []int{1, 2}`
+- boolean options: `--var` enables and `--no-var` disables a boolean
 - options can be composite types, such as structs, slices, or maps:
-  - `-v 1,2,3` sets `v = []int{1,2,3}`
-  - `-v [1 2 3]` sets `v = []int{1,2,3}`
+  - `-v 1,2,3` sets `v = []int{1, 2, 3}`
+  - `-v [1 2 3]` sets `v = []int{1, 2, 3}`
   - `-v {1:one 2:two}` sets `map[int]string{1:"one", 2:"two"}`
   - `-v {string 42 [0 1]}` sets `struct{S string, I int, B [2]bool}{"string", 42, false, true}`
 - options can retrieve their list/dict values from a source (such as SQL):
