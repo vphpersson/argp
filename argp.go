@@ -175,16 +175,9 @@ func NewCmd(cmd Cmd, description string) *Argp {
 				argp.vars = append(argp.vars, variable)
 			}
 		}
-		optionalIndex := -1
 		for i := 0; i <= maxIndex; i++ {
 			if v := argp.findIndex(i); v == nil {
 				panic(fmt.Sprintf("option indices must be continuous: index %v is missing", i))
-			} else if v.Default != nil {
-				if optionalIndex == -1 {
-					optionalIndex = i
-				}
-			} else if optionalIndex != -1 {
-				panic(fmt.Sprintf("required options cannot follow optional ones: index %v is required but %v is optional", i, optionalIndex))
 			}
 		}
 	}
@@ -608,7 +601,7 @@ func (argp *Argp) Parse() {
 			} else if argp.Error != nil {
 				argp.Error.Println(err)
 			} else {
-				fmt.Fprintf(os.Stderr,"ERROR: %v\n", err)
+				fmt.Fprintf(os.Stderr, "ERROR: %v\n", err)
 				os.Exit(1)
 			}
 			os.Exit(2)
