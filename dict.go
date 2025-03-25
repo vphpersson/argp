@@ -1,8 +1,10 @@
 package argp
 
 import (
+	"bufio"
 	"database/sql"
 	"fmt"
+	"os"
 	"reflect"
 	"strings"
 
@@ -29,6 +31,7 @@ func NewDict(values []string) *Dict {
 		Sources: map[string]DictSourceFunc{
 			"static": NewStaticDict,
 			"inline": NewInlineDict,
+			"file":   NewFileDict,
 		},
 		Values: values,
 	}
@@ -128,6 +131,37 @@ func (t *InlineDict) Get(key string) (string, error) {
 
 func (t *InlineDict) Close() error {
 	return nil
+}
+
+type FileDict struct {
+	InlineDict
+}
+
+func NewFileDict(s []string) (DictSource, error) {
+	if len(s) == 0 {
+		return nil, fmt.Errorf("missing filename")
+	} else if 1 < len(s) {
+		return nil, fmt.Errorf("expected single filename")
+	}
+
+	r, err := os.Open(s[0])
+	if err != nil {
+		return nil, err
+	}
+	defer r.Close()
+
+	dict := map[string]string{}
+	scanner := bufio.NewScanner(r)
+	for scanner.Scan() {
+		line := scanner.Text()
+		if is := strings.IndexByte(line, '='); is != -1 {
+			dict[strings.TrimSpace(line[:is])] = strings.TrimSpace(line[is+1:])
+		}
+	}
+	if err := scanner.Err(); err != nil {
+		return nil, err
+	}
+	return &FileDict{InlineDict{dict}}, nil
 }
 
 type SQLDict struct {

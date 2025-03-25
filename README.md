@@ -19,10 +19,22 @@ GNU command line argument rules:
 - options can have a value: `-a 1` means that `a` has value `1`
 - option values can be separated by a space, equal sign, or nothing: `-a1 -a=1 -a 1` are all equal
 - options and non-options can be interleaved
+- options may appear in any order
 - the argument `--` terminates all options so that all following arguments are treated as non-options
-- a single `-` argument is a non-option usually used to mean standard in or out streams
+- an argument value of `-` is allowed, usually used to mean standard in or out streams
+
+Additional features:
+
 - options may be specified multiple times, only the last one determines its value
-- options can have multiple values: `-a 1 2 3` means that `a` is an array/slice/struct of three numbers of value `[1,2,3]`
+- counting options are supported: `-vvv` sets `v = 3`
+- options can be composite types, such as structs, slices, or maps:
+  - `-v 1,2,3` sets `v = []int{1,2,3}`
+  - `-v [1 2 3]` sets `v = []int{1,2,3}`
+  - `-v {1:one 2:two}` sets `map[int]string{1:"one", 2:"two"}`
+  - `-v {string 42 [0 1]}` sets `struct{S string, I int, B [2]bool}{"string", 42, false, true}`
+- options can retrieve their list/dict values from a source (such as SQL):
+  - `-v file:email-addresses.txt` sets `v = []string{ /* lines in email-addresses.txt */ }`
+  - `-v file:email-addresses.txt` sets `v = map[string]string{ /* key=value in email-addresses.txt lines */ }`
 
 *See also [github.com/tdewolff/prompt](https://github.com/tdewolff/prompt) for a command line prompter.*
 

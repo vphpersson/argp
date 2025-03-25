@@ -1,8 +1,10 @@
 package argp
 
 import (
+	"bufio"
 	"database/sql"
 	"fmt"
+	"os"
 	"reflect"
 	"strings"
 	"time"
@@ -29,6 +31,7 @@ func NewList(values []string) *List {
 	return &List{
 		Sources: map[string]ListSourceFunc{
 			"inline": NewInlineList,
+			"file":   NewFileList,
 		},
 		Values: values,
 	}
@@ -108,6 +111,37 @@ func (t *InlineList) List() ([]string, error) {
 
 func (t *InlineList) Close() error {
 	return nil
+}
+
+type FileList struct {
+	InlineList
+}
+
+func NewFileList(s []string) (ListSource, error) {
+	if len(s) == 0 {
+		return nil, fmt.Errorf("missing filename")
+	} else if 1 < len(s) {
+		return nil, fmt.Errorf("expected single filename")
+	}
+
+	r, err := os.Open(s[0])
+	if err != nil {
+		return nil, err
+	}
+	defer r.Close()
+
+	list := []string{}
+	scanner := bufio.NewScanner(r)
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if 0 < len(line) {
+			list = append(list, line)
+		}
+	}
+	if err := scanner.Err(); err != nil {
+		return nil, err
+	}
+	return &FileList{InlineList{list}}, nil
 }
 
 type SQLList struct {
