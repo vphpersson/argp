@@ -39,7 +39,7 @@ Additional features:
 *See also [github.com/tdewolff/prompt](https://github.com/tdewolff/prompt) for a command line prompter.*
 
 ## Installation
-Make sure you have [Git](https://git-scm.com/) and [Go](https://golang.org/dl/) (1.13 or higher) installed, run
+Make sure you have [Git](https://git-scm.com/) and [Go](https://golang.org/dl/) (1.22 or higher) installed, run
 ```
 mkdir Project
 cd Project
@@ -57,6 +57,7 @@ import (
 ## Examples
 ### Default usage
 A regular command with short and long options.
+See [`cmd/test/main.go`](cmd/test/main.go).
 
 ```go
 package main
@@ -64,16 +65,19 @@ package main
 import "github.com/tdewolff/argp"
 
 func main() {
-    var verbose bool
+    var verbose int
+    var input string
     var output string
+    var files []string
     size := 512 // default value
 
-    argp := argp.New("CLI tool description")
-    argp.AddOpt(argp.Count{&verbose}, "v", "verbose", "Increase verbosity, eg. -vvv")
-    argp.AddOpt(&output, "o", "output", "Output file name")
-    argp.AddOpt(&size, "", "size", "Image size")
-    argp.AddArg(&input, "input", "Input file name size")
-    argp.Parse()
+    cmd := argp.New("CLI tool description")
+    cmd.AddOpt(argp.Count{&verbose}, "v", "verbose", "Increase verbosity, eg. -vvv")
+    cmd.AddOpt(&output, "o", "output", "Output file name")
+    cmd.AddOpt(&size, "", "size", "Image size")
+    cmd.AddArg(&input, "input", "Input file name")
+    cmd.AddRest(&files, "files", "Additional files")
+    cmd.Parse()
 
     // ...
 }
@@ -82,13 +86,17 @@ func main() {
 with help output
 
 ```
-Usage: test [options]
+Usage: test [options] input files...
 
 Options:
-  -h, --help     Help
-  -o, --output   Output file name
-      --size     Image size
-  -v, --verbose
+  -h, --help          Help
+  -o, --output string Output file name
+      --size=512 int  Image size
+  -v, --verbose int   Increase verbosity, eg. -vvv
+
+Arguments:
+  input     Input file name
+  files     Additional files
 ```
 
 ### Sub commands
@@ -122,6 +130,15 @@ type Command struct {
 func (cmd *Command) Run() error {
     // ...
 }
+```
+
+### Arguments
+```go
+var input string
+cmd.AddArg(&input, "input", "Input file name")
+
+var files []string
+cmd.AddRest(&files, "files", "Additional input files")
 ```
 
 ### Options
