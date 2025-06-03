@@ -1,12 +1,10 @@
-module github.com/tdewolff/argp
+module github.com/vphpersson/argp
 
-go 1.11
+go 1.24.0
 
-toolchain go1.24.2
+toolchain go1.24.3
 
 require (
-	github.com/jmoiron/sqlx v1.4.0
-	github.com/pelletier/go-toml v1.9.5
-	github.com/tdewolff/test v1.0.11
-	gopkg.in/yaml.v3 v3.0.1
+	github.com/Motmedel/utils_go v0.0.205
+	github.com/google/go-cmp v0.7.0
 )

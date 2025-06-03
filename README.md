@@ -64,7 +64,7 @@ See [`cmd/test/main.go`](cmd/test/main.go).
 ```go
 package main
 
-import "github.com/tdewolff/argp"
+import "github.com/vphpersson/argp"
 
 func main() {
     var verbose int
@@ -207,76 +207,6 @@ cmd.AddOpt(argp.Append{&v}, "v", "value", "Values")
 // Append values for each flag
 // -v 1 -v 2  =>  [1 2]
 ```
-
-#### Config
-Load all arguments from a configuration file. Currently only TOML is supported.
-
-```go
-cmd.AddOpt(&argp.Config{cmd, "config.toml"}, "", "config", "Configuration file")
-```
-
-#### List
-Use a list source specified as type:list. Default supported types are: inline.
-- Inline takes a []string, e.g. `inline:[foo bar]`
-
-```go
-list := argp.NewList(il)
-defer list.Close()
-
-cmd.AddOpt(&list, "", "list", "List")
-```
-
-You can add a MySQL source:
-```
-type mysqlList struct {
-	Hosts    string
-	User     string
-	Password string
-	Dbname   string
-	Query    string
-}
-
-func newMySQLList(s []string) (argp.ListSource, error) {
-	if len(s) != 1 {
-		return nil, fmt.Errorf("invalid path")
-	}
-
-	t := mysqlList{}
-	if err := argp.LoadConfigFile(&t, s[0]); err != nil {
-		return nil, err
-	}
-
-	uri := fmt.Sprintf("%s:%s@%s/%s", t.User, t.Password, t.Hosts, t.Dbname)
-	db, err := sqlx.Open("mysql", uri)
-	if err != nil {
-		return nil, err
-	}
-	db.SetConnMaxLifetime(time.Minute)
-	db.SetConnMaxIdleTime(time.Minute)
-	db.SetMaxOpenConns(10)
-	db.SetMaxIdleConns(10)
-	return argp.NewSQLList(db, t.Query, "")
-}
-
-// ...
-list.AddSource("mysql", newMySQLList)
-// ...
-```
-Use as `./bin -list mysql:list-config.toml`.
-
-#### Dict
-Use a dict source specified as type:dict. Default supported types are: static and inline.
-- Static takes a string and will return that as a value for all keys, e.g. `static:foobar`
-- Inline takes a map[string]string, e.g. `inline:{foo:1 bar:2}`
-
-```go
-dict := argp.NewDict([]string{"static:value"})
-defer dict.Close()
-
-cmd.AddOpt(&dict, "", "dict", "Dict")
-```
-
-You can add custom sources must like the mysqlList example above.
 
 ### Option tags
 The following struct will accept the following options and arguments:

@@ -2,7 +2,9 @@ package argp
 
 import (
 	"fmt"
-	"log"
+	motmedelErrors "github.com/Motmedel/utils_go/pkg/errors"
+	argpErrors "github.com/vphpersson/argp/pkg/errors"
+	argpVariable "github.com/vphpersson/argp/pkg/types/variable"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -13,58 +15,21 @@ import (
 	"unicode/utf8"
 )
 
-// ShowUsage can be returned from a command to show the help message.
-var ShowUsage error = fmt.Errorf("bad command usage")
-
-// Var is a command option or argument
-type Var struct {
-	Value       reflect.Value
-	Name        string
-	Short       rune // 0 if not used
-	Index       int  // -1 if not used
-	Rest        bool
-	Default     interface{} // nil is not used
-	Description string
-	isSet       bool
-}
-
-// IsOption returns true for an option
-func (v *Var) IsOption() bool {
-	return !v.IsArgument()
-}
-
-// IsArgument returns true for an argument
-func (v *Var) IsArgument() bool {
-	return v.Index != -1 || v.Rest
-}
-
-// Set sets the variable's value
-func (v *Var) Set(i interface{}) bool {
-	val := reflect.ValueOf(i)
-	if !val.CanConvert(v.Value.Type()) {
-		return false
-	}
-	v.Value.Set(val.Convert(v.Value.Type()))
-	return true
-}
-
-// Cmd is a command
+// Cmd is a command.
 type Cmd interface {
 	Run() error
 }
 
-// Argp is a (sub) command parser
+// Argp is a (sub) command parser.
 type Argp struct {
 	Cmd
 	Description string
 
 	parent *Argp
 	name   string
-	vars   []*Var
+	vars   []*argpVariable.Variable
 	cmds   map[string]*Argp
 	help   bool
-
-	Error *log.Logger
 }
 
 // New returns a new command parser that can set options and returns the remaining arguments from `Argp.Parse`.
@@ -91,11 +56,11 @@ func NewCmd(cmd Cmd, description string) *Argp {
 		}
 
 		maxIndex := -1
-		for j := 0; j < v.NumField(); j++ {
+		for j := range v.NumField() {
 			tfield := v.Type().Field(j)
 			vfield := v.Field(j)
 			if vfield.IsValid() {
-				variable := &Var{}
+				variable := &argpVariable.Variable{}
 				variable.Value = vfield
 				variable.Name = fromFieldname(tfield.Name)
 				variable.Index = -1
@@ -117,11 +82,13 @@ func NewCmd(cmd Cmd, description string) *Argp {
 				if variable.Name == "" {
 					variable.Name = short
 				}
+
 				if !isValidName(variable.Name) {
 					panic(fmt.Sprintf("%v: invalid option name: --%v", option, variable.Name))
 				} else if argp.findName(variable.Name) != nil {
 					panic(fmt.Sprintf("%v: option name already exists: --%v", option, variable.Name))
 				}
+
 				if short != "" {
 					if !isValidName(short) {
 						panic(fmt.Sprintf("%v: invalid short option name: --%v", option, short))
@@ -134,6 +101,7 @@ func NewCmd(cmd Cmd, description string) *Argp {
 					}
 					variable.Short = r
 				}
+
 				if index != "" {
 					if short != "" {
 						panic(fmt.Sprintf("%v: can not set both an option short name and index", option))
@@ -160,6 +128,7 @@ func NewCmd(cmd Cmd, description string) *Argp {
 						}
 					}
 				}
+
 				if hasDef {
 					defVal := reflect.New(vfield.Type()).Elem()
 					if _, err := scanVar(defVal, "", splitArguments(def)); err != nil {
@@ -191,7 +160,7 @@ func NewCmd(cmd Cmd, description string) *Argp {
 	return argp
 }
 
-// AddCmd adds a sub command
+// AddCmd adds a sub command.
 func (argp *Argp) AddCmd(cmd Cmd, name, description string) *Argp {
 	if _, ok := argp.cmds[name]; ok {
 		panic(fmt.Sprintf("command already exists: %v", name))
@@ -206,25 +175,17 @@ func (argp *Argp) AddCmd(cmd Cmd, name, description string) *Argp {
 	return sub
 }
 
-// IsSet returns true if the option is set
-func (argp *Argp) IsSet(name string) bool {
-	if v := argp.findName(name); v != nil {
-		return v.isSet
-	}
-	return false
-}
-
-// AddOpt adds an option
-func (argp *Argp) AddOpt(dst interface{}, short, name string, description string) {
+// AddOpt adds an option.
+func (argp *Argp) AddOpt(dst any, short, name string, description string) {
 	v := reflect.ValueOf(dst)
-	_, isCustom := dst.(Custom)
+	_, isCustom := dst.(ArgumentScanner)
 	if !isCustom && v.Type().Kind() != reflect.Ptr {
-		panic("dst: must pass pointer to variable or comply with argp.Custom interface")
+		panic("dst: must pass pointer to variable or comply with argp.ArgumentScanner interface")
 	} else if !isCustom {
 		v = v.Elem()
 	}
 
-	variable := &Var{}
+	variable := &argpVariable.Variable{}
 	variable.Value = v
 	variable.Index = -1
 
@@ -262,17 +223,17 @@ func (argp *Argp) AddOpt(dst interface{}, short, name string, description string
 	argp.vars = append(argp.vars, variable)
 }
 
-// AddArg adds an indexed value
-func (argp *Argp) AddArg(dst interface{}, name, description string) {
+// AddArg adds an indexed value.
+func (argp *Argp) AddArg(dst any, name, description string) {
 	v := reflect.ValueOf(dst)
-	_, isCustom := dst.(Custom)
+	_, isCustom := dst.(ArgumentScanner)
 	if !isCustom && v.Type().Kind() != reflect.Ptr {
-		panic("dst: must pass pointer to variable or comply with argp.Custom interface")
+		panic("dst: must pass pointer to variable or comply with argp.ArgumentScanner interface")
 	} else if !isCustom {
 		v = v.Elem()
 	}
 
-	variable := &Var{}
+	variable := &argpVariable.Variable{}
 	variable.Value = v
 	variable.Name = strings.ToLower(name)
 	variable.Index = 0
@@ -280,7 +241,7 @@ func (argp *Argp) AddArg(dst interface{}, name, description string) {
 		panic(fmt.Sprintf("unsupported type %s", v.Type()))
 	}
 	for _, v := range argp.vars {
-		// find next free index
+		// find the next free index
 		if variable.Index <= v.Index {
 			variable.Index = v.Index + 1
 		}
@@ -292,16 +253,16 @@ func (argp *Argp) AddArg(dst interface{}, name, description string) {
 	argp.vars = append(argp.vars, variable)
 }
 
-func (argp *Argp) AddRest(dst interface{}, name, description string) {
+func (argp *Argp) AddRest(dst any, name, description string) {
 	v := reflect.ValueOf(dst)
-	_, isCustom := dst.(Custom)
+	_, isCustom := dst.(ArgumentScanner)
 	if !isCustom && v.Type().Kind() != reflect.Ptr {
-		panic("dst: must pass pointer to variable or comply with argp.Custom interface")
+		panic("dst: must pass pointer to variable or comply with argp.ArgumentScanner interface")
 	} else if !isCustom {
 		v = v.Elem()
 	}
 
-	variable := &Var{}
+	variable := &argpVariable.Variable{}
 	variable.Value = v
 	variable.Name = strings.ToLower(name)
 	variable.Index = -1
@@ -318,66 +279,17 @@ func (argp *Argp) AddRest(dst interface{}, name, description string) {
 	argp.vars = append(argp.vars, variable)
 }
 
-func wrapString(s string, cols int) (string, string) {
-	if len(s) <= cols {
-		return s, ""
-	}
-	minWidth := int(0.8*float64(cols) + 0.5)
-	for i := cols; minWidth <= i; i-- {
-		if s[i] == ' ' {
-			return s[:i], s[i+1:]
-		}
-	}
-	return s[:cols], s[cols:]
-}
-
 type optionHelp struct {
 	short, name, typ, desc string
 }
 
-func appendStructHelps(helps []optionHelp, root string, v reflect.Value) []optionHelp {
-	for i := 0; i < v.NumField(); i++ {
-		field := v.Type().Field(i)
-		name := root + "."
-		if tagName := field.Tag.Get("name"); tagName != "" {
-			name += tagName
-		} else if tagShort := field.Tag.Get("short"); tagShort != "" {
-			name += tagShort
-		} else {
-			name += fromFieldname(field.Name)
-		}
-		if field.Type.Kind() == reflect.Struct {
-			helps = appendStructHelps(helps, name, v.Field(i))
-		} else {
-			if deflt := v.Field(i); !deflt.IsZero() {
-				val := fmt.Sprintf("%v", deflt)
-				if space := strings.IndexByte(val, ' '); space != -1 {
-					val = "'" + val + "'"
-				}
-				name += "=" + val
-			}
-			typ := TypeName(field.Type)
-			desc := field.Tag.Get("desc")
-			helps = append(helps, optionHelp{
-				short: "",
-				name:  name,
-				typ:   typ,
-				desc:  desc,
-			})
-		}
-	}
-	return helps
-}
+func getOptionHelps(vs []*argpVariable.Variable) []optionHelp {
+	var helps []optionHelp
 
-func getOptionHelps(vs []*Var) []optionHelp {
-	helps := []optionHelp{}
 	for _, v := range vs {
 		var val, typ string
-		if custom, ok := v.Value.Interface().(Custom); ok {
+		if custom, ok := v.Value.Interface().(ArgumentScanner); ok {
 			val, typ = custom.Help()
-		} else if v.Value.Kind() == reflect.Struct {
-			helps = appendStructHelps(helps, v.Name, v.Value)
-			continue
 		} else {
 			if v.Default != nil && !reflect.ValueOf(v.Default).IsZero() {
 				val = fmt.Sprint(v.Default)
@@ -413,8 +325,6 @@ func getOptionHelps(vs []*Var) []optionHelp {
 
 // PrintHelp prints the help overview. This is automatically called when unknown or bad options are passed, but you can call this explicitly in other cases.
 func (argp *Argp) PrintHelp() {
-	_, cols, _ := TerminalSize()
-
 	base := argp.name
 	parent := argp.parent
 	for parent != nil {
@@ -422,8 +332,8 @@ func (argp *Argp) PrintHelp() {
 		parent = parent.parent
 	}
 
-	options := []*Var{}
-	arguments := []*Var{}
+	var options []*argpVariable.Variable
+	var arguments []*argpVariable.Variable
 	for _, v := range argp.vars {
 		if v.IsArgument() {
 			arguments = append(arguments, v)
@@ -431,6 +341,7 @@ func (argp *Argp) PrintHelp() {
 			options = append(options, v)
 		}
 	}
+
 	sort.Slice(options, sortOption(options))
 	sort.Slice(arguments, sortArgument(arguments))
 
@@ -501,30 +412,15 @@ func (argp *Argp) PrintHelp() {
 				n = 0
 			}
 			fmt.Printf("%s", strings.Repeat(" ", nMax-n))
-			if cols < 60 {
-				fmt.Printf("%s\n", o.desc)
-			} else if 0 < len(o.desc) {
-				n = nMax
-				for {
-					var s string
-					s, o.desc = wrapString(o.desc, cols-n)
-					fmt.Printf("%s\n", s)
-					if len(o.desc) == 0 {
-						break
-					}
-					fmt.Print(strings.Repeat(" ", n))
-				}
-			} else {
-				fmt.Printf("\n")
-			}
+			fmt.Printf("%s\n", o.desc)
 		}
 	}
 
 	if 0 < len(argp.cmds) {
 		fmt.Printf("\nCommands:\n")
 		nMax := 0
-		cmds := []string{}
-		for cmd, _ := range argp.cmds {
+		var cmds []string
+		for cmd := range argp.cmds {
 			if nMax < 2+len(cmd) {
 				nMax = 2 + len(cmd)
 			}
@@ -576,42 +472,36 @@ func (argp *Argp) PrintHelp() {
 }
 
 // Parse parses the command line arguments. When the main command was instantiated with `NewCmd`, this command will exit.
-func (argp *Argp) Parse() {
-	cmd, rest, err := argp.parse(os.Args[1:])
+func (argp *Argp) Parse() error {
+	arguments := os.Args[1:]
+	cmd, rest, err := argp.parse(arguments)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "%v\n\n", err)
-		cmd.PrintHelp()
-		os.Exit(2)
-	} else if cmd.help || cmd != argp && cmd.Cmd == nil {
-		cmd.PrintHelp()
-		os.Exit(0)
-	} else if cmd.Cmd != nil {
-		if len(rest) != 0 {
-			msg := "unknown arguments"
-			if len(rest) == 1 {
-				msg = "unknown argument"
-			}
-			fmt.Fprintf(os.Stderr, "%s: %v\n\n", msg, strings.Join(rest, " "))
-			cmd.PrintHelp()
-			os.Exit(2)
-		} else if err := cmd.Cmd.Run(); err != nil {
-			// Exit with status 2 on bad usage and with status 1 when we don't know the nature of the error.
-			if err == ShowUsage {
-				cmd.PrintHelp()
-			} else if argp.Error != nil {
-				argp.Error.Println(err)
-			} else {
-				fmt.Fprintf(os.Stderr, "ERROR: %v\n", err)
-				os.Exit(1)
-			}
-			os.Exit(2)
-		} else {
-			os.Exit(0)
-		}
+		return motmedelErrors.New(fmt.Errorf("parse: %w", err), arguments)
 	}
+
+	// TODO: What do these conditions mean?
+	if cmd.help || cmd != argp && cmd.Cmd == nil {
+		return argpErrors.ErrShowHelp
+	}
+
+	// TODO: What does this condition mean?
+	if cmd.Cmd == nil {
+		return nil
+	}
+
+	if len(rest) != 0 {
+		restString := strings.Join(rest, " ")
+		return motmedelErrors.NewWithTrace(fmt.Errorf("%w: %s", argpErrors.ErrUnexpectedInput, restString))
+	}
+
+	if err := cmd.Cmd.Run(); err != nil {
+		return motmedelErrors.New(fmt.Errorf("cmd run: %w", err), cmd.Cmd)
+	}
+
+	return nil
 }
 
-func (argp *Argp) findShort(short rune) *Var {
+func (argp *Argp) findShort(short rune) *argpVariable.Variable {
 	for _, v := range argp.vars {
 		if v.Short != 0 && v.Short == short {
 			return v
@@ -620,14 +510,16 @@ func (argp *Argp) findShort(short rune) *Var {
 	return nil
 }
 
-func (argp *Argp) findName(name string) *Var {
+func (argp *Argp) findName(name string) *argpVariable.Variable {
 	if name == "" {
 		return nil
 	}
+
 	name = strings.ToLower(name)
 	if i := strings.IndexAny(name, ".["); i != -1 {
 		name = name[:i]
 	}
+
 	for _, v := range argp.vars {
 		if v.Name == name || v.Name == "" && string(v.Short) == name {
 			return v
@@ -636,7 +528,7 @@ func (argp *Argp) findName(name string) *Var {
 	return nil
 }
 
-func (argp *Argp) findIndex(index int) *Var {
+func (argp *Argp) findIndex(index int) *argpVariable.Variable {
 	for _, v := range argp.vars {
 		if v.Index == index {
 			return v
@@ -645,7 +537,7 @@ func (argp *Argp) findIndex(index int) *Var {
 	return nil
 }
 
-func (argp *Argp) findRest() *Var {
+func (argp *Argp) findRest() *argpVariable.Variable {
 	for _, v := range argp.vars {
 		if v.Rest {
 			return v
@@ -673,7 +565,7 @@ func (argp *Argp) parse(args []string) (*Argp, []string, error) {
 		}
 	}
 
-	rest := []string{}
+	var rest []string
 	for i := 0; i < len(args); i++ {
 		arg := args[i]
 		if arg == "--" {
@@ -695,18 +587,22 @@ func (argp *Argp) parse(args []string) (*Argp, []string, error) {
 
 				v := argp.findName(name)
 				if v == nil {
-					return argp, nil, fmt.Errorf("unknown option --%s", name)
+					return argp, nil, motmedelErrors.NewWithTrace(
+						fmt.Errorf("%w: %s", argpErrors.ErrUnknownOption, name),
+					)
 				}
-				n, err := scanVar(v.Value, name, s)
+
+				value := v.Value
+				n, err := scanVar(value, name, s)
 				if err != nil {
-					return argp, nil, fmt.Errorf("option --%s: %v", name, err)
+					return argp, nil, motmedelErrors.New(fmt.Errorf("scan var: %w", err), value, name, s)
 				} else {
 					i += n
 					if split {
 						i--
 					}
 				}
-				v.isSet = true
+				v.IsSet = true
 			} else {
 				for j := 1; j < len(arg); {
 					name, n := utf8.DecodeRuneInString(arg[j:])
@@ -714,7 +610,9 @@ func (argp *Argp) parse(args []string) (*Argp, []string, error) {
 
 					v := argp.findShort(name)
 					if v == nil {
-						return argp, nil, fmt.Errorf("unknown option -%c", name)
+						return argp, nil, motmedelErrors.NewWithTrace(
+							fmt.Errorf("%w: %v", argpErrors.ErrUnknownOption, name),
+						)
 					} else {
 						s := append([]string{arg[j:]}, args[i+1:]...)
 						hasEquals := j < len(arg) && arg[j] == '='
@@ -725,9 +623,13 @@ func (argp *Argp) parse(args []string) (*Argp, []string, error) {
 						if !valueGlued {
 							s = s[1:]
 						}
-						n, err := scanVar(v.Value, string(name), s)
+
+						nameString := string(name)
+						value := v.Value
+
+						n, err := scanVar(value, nameString, s)
 						if err != nil {
-							return argp, nil, fmt.Errorf("option -%c: %v", name, err)
+							return argp, nil, motmedelErrors.New(fmt.Errorf("scan var: %w", err), value, nameString, s)
 						} else if n == 0 {
 							continue // can be of the form -abc
 						}
@@ -737,7 +639,7 @@ func (argp *Argp) parse(args []string) (*Argp, []string, error) {
 						i += n
 						break
 					}
-					v.isSet = true
+					v.IsSet = true
 				}
 			}
 		} else if 0 < len(arg) {
@@ -755,18 +657,9 @@ func (argp *Argp) parse(args []string) (*Argp, []string, error) {
 		if _, err := scanVar(v.Value, "", []string{arg}); err != nil {
 			return argp, nil, fmt.Errorf("argument %d: %v", index, err)
 		}
-		v.isSet = true
+		v.IsSet = true
 		index++
 	}
-	//for _, v := range argp.vars {
-	//	if v.Index != -1 && index <= v.Index && v.Default == nil {
-	//		name := v.Name
-	//		if name == "" {
-	//			name = strconv.Itoa(index)
-	//		}
-	//		return argp, nil, fmt.Errorf("argument %v is missing", name)
-	//	}
-	//}
 
 	// rest arguments
 	v := argp.findRest()
@@ -774,92 +667,23 @@ func (argp *Argp) parse(args []string) (*Argp, []string, error) {
 	if v != nil {
 		v.Set(rest)
 		rest = rest[:0]
-		v.isSet = true
+		v.IsSet = true
 	}
 	return argp, rest, nil
 }
 
 // scanVar parses a slice of strings into the given value.
-func scanVar(v reflect.Value, name string, s []string) (int, error) {
-	if scanner, ok := v.Interface().(Custom); ok {
-		// implements Custom
-		return scanner.Scan(name, s)
+func scanVar(v reflect.Value, name string, arguments []string) (int, error) {
+	if scanner, ok := v.Interface().(ArgumentScanner); ok {
+		n, err := scanner.Scan(name, arguments)
+		if err != nil {
+			return 0, motmedelErrors.New(fmt.Errorf("scanner scan: %w", err), scanner)
+		}
+
+		return n, nil
 	}
 
-	if i := strings.IndexAny(name, ".["); i != -1 {
-		j := -1
-		origName := name
-		if name[i] == '.' {
-			j = strings.IndexAny(name[i+1:], ".[")
-			if j == -1 {
-				j = len(name)
-			} else {
-				j += i + 1
-			}
-			name = name[i+1 : j]
-		} else {
-			j = strings.IndexByte(name[i+1:], ']')
-			if j == -1 {
-				return 0, fmt.Errorf("expected terminating ] in variable index")
-			}
-			j += i + 2
-			name = name[i+1 : j-1]
-		}
-		rest := origName[j:]
-
-		switch v.Kind() {
-		case reflect.Array, reflect.Slice:
-			typ := "array"
-			if v.Kind() == reflect.Slice {
-				typ = "slice"
-			}
-
-			var index int
-			if _, err := scanValue(reflect.ValueOf(&index).Elem(), []string{name}); err != nil {
-				return 0, fmt.Errorf("%v index %v: %v", typ, name, err)
-			} else if v.Kind() == reflect.Slice && v.IsNil() || index < 0 || v.Len() <= index {
-				// TODO: slice expand range?
-				return 0, fmt.Errorf("%v index %v: out of range", typ, index)
-			}
-			return scanVar(v.Index(index), rest, s)
-		case reflect.Map:
-			key := reflect.New(v.Type().Key()).Elem()
-			if _, err := scanValue(key, []string{name}); err != nil {
-				return 0, fmt.Errorf("map key %v: %v", name, err)
-			} else if v.IsNil() {
-				v.Set(reflect.MakeMap(v.Type()))
-			}
-			field := reflect.New(v.Type().Elem()).Elem()
-			n, err := scanVar(field, rest, s)
-			if err == nil {
-				v.SetMapIndex(key, field)
-			}
-			return n, err
-		case reflect.Struct:
-			t := v.Type()
-			found := false
-			for i := 0; i < t.NumField(); i++ {
-				if t.Field(i).Tag.Get("name") == name || t.Field(i).Tag.Get("short") == name || fromFieldname(t.Field(i).Name) == name {
-					name = t.Field(i).Name
-					found = true
-					break
-				}
-			}
-			if !found {
-				name = toFieldname(name)
-			}
-			field := v.FieldByName(name)
-			zero := reflect.Value{}
-			if field == zero {
-				return 0, fmt.Errorf("struct field: missing field %v in struct", name)
-			}
-			return scanVar(field, rest, s)
-		default:
-			return 0, fmt.Errorf("unexpected %v in name %v", string(origName[i]), origName)
-		}
-	}
-
-	n, err := scanValue(v, s)
+	n, err := scanValue(v, arguments)
 	if err != nil && v.Kind() == reflect.Bool {
 		v.SetBool(true)
 		return 0, nil
@@ -867,160 +691,104 @@ func scanVar(v reflect.Value, name string, s []string) (int, error) {
 	return n, err
 }
 
-// truncEnd splits the arguments and returns values for an array/slice/map/struct and remaining
-// the first value is nil when either brackets don't match or closing brackets are missing
-// the last return value indicates if the closing bracket was in the middle of an item (bad syntax)
-func truncEnd(s []string) ([]string, []string, bool) {
-	if len(s) == 0 {
-		return []string{}, s, false
-	}
-	levels := []byte{}
-	for n, item := range s {
-		for i := 0; i < len(item); i++ {
-			switch item[i] {
-			case '{', '[':
-				levels = append(levels, item[i]+2) // + 2 to get the closing bracket
-			case '}', ']':
-				if len(levels) == 0 || levels[len(levels)-1] != item[i] {
-					return nil, s, false // open/close brackets don't match, or too many closes
-				} else if len(levels) == 1 {
-					if i+1 == len(item) {
-						return s[:n+1], s[n+1:], false
-					}
-					// split last item
-					k := s[n:]
-					s = append(s[:n:n], s[n][:i+1])
-					k[0] = k[0][i+1:]
-					return s, k, true
-				}
-				levels = levels[:len(levels)-1]
-			}
-		}
-	}
-	if len(levels) == 0 {
-		// there were no brackets to begin with
-		return s[:1], s[1:], false
-	}
-	return nil, s, false // no closing bracket found
-}
-
-func scanValue(v reflect.Value, s []string) (int, error) {
-	if len(s) == 0 {
+func scanValue(v reflect.Value, arguments []string) (int, error) {
+	if len(arguments) == 0 {
 		if v.Kind() == reflect.String {
 			v.SetString("")
 			return 0, nil
 		}
-		return 0, fmt.Errorf("missing value")
+
+		return 0, motmedelErrors.NewWithTrace(argpErrors.ErrMissingValue)
 	}
 
 	n := 0
-	switch v.Kind() {
+	switch kind := v.Kind(); kind {
 	case reflect.String:
-		v.SetString(s[0])
+		v.SetString(arguments[0])
 		n++
 	case reflect.Bool:
-		i, err := strconv.ParseBool(s[0])
+		boolCandidate := arguments[0]
+		i, err := strconv.ParseBool(boolCandidate)
 		if err != nil {
-			return 0, fmt.Errorf("invalid boolean '%v'", s[0])
+			return 0, motmedelErrors.NewWithTrace(fmt.Errorf("strconv parse bool: %w", err), boolCandidate)
 		}
+
 		v.SetBool(i)
 		n++
 	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
-		i, err := strconv.ParseInt(s[0], 10, 64)
+		intCandidate := arguments[0]
+		i, err := strconv.ParseInt(intCandidate, 10, 64)
 		if err != nil {
-			return 0, fmt.Errorf("invalid integer '%v'", s[0])
+			return 0, motmedelErrors.NewWithTrace(fmt.Errorf("strconv parse int: %w", err), intCandidate)
 		}
+
 		v.SetInt(i)
 		n++
 	case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
-		i, err := strconv.ParseUint(s[0], 10, 64)
+		uintCandidate := arguments[0]
+		i, err := strconv.ParseUint(uintCandidate, 10, 64)
 		if err != nil {
-			return 0, fmt.Errorf("invalid positive integer '%v'", s[0])
+			return 0, motmedelErrors.NewWithTrace(fmt.Errorf("strconv parse uint: %w", err), uintCandidate)
 		}
+
 		v.SetUint(i)
 		n++
 	case reflect.Float32, reflect.Float64:
-		i, err := strconv.ParseFloat(s[0], 64)
+		floatCandidate := arguments[0]
+		i, err := strconv.ParseFloat(floatCandidate, 64)
 		if err != nil {
-			return 0, fmt.Errorf("invalid number '%v'", s[0])
+			return 0, motmedelErrors.NewWithTrace(fmt.Errorf("strconv parse float: %w", err), floatCandidate)
 		}
+
 		v.SetFloat(i)
 		n++
 	case reflect.Array, reflect.Slice:
+		if len(arguments[0]) == 0 {
+			return 1, nil
+		}
+
 		typ := "array"
 		if v.Kind() == reflect.Slice {
 			typ = "slice"
 		}
 
-		var split, comma bool
-		if len(s[0]) == 0 {
-			return 1, nil
-		} else if s[0][0] != '[' {
-			comma = true
-		} else if s, _, split = truncEnd(s); s == nil || split {
-			return 0, fmt.Errorf("invalid %v", typ)
-		} else {
-			// !comma
-			n = len(s)
-			if len(s[0]) == 1 {
-				s = s[1:]
-			} else {
-				s[0] = s[0][1:]
-			}
-			if len(s[len(s)-1]) == 1 {
-				s = s[:len(s)-1]
-			} else {
-				s[len(s)-1] = s[len(s)-1][:len(s[len(s)-1])-1]
-			}
-		}
-
 		j := 0
 		slice := reflect.Zero(reflect.SliceOf(v.Type().Elem()))
 		if v.Kind() == reflect.Slice {
-			slice = reflect.Value(v)
+			slice = v
 		}
 		for {
-			if j != 0 && comma {
+			if j != 0 {
 				// consume comma
-				for 0 < len(s) && len(s[0]) == 0 {
-					s = s[1:]
+				for 0 < len(arguments) && len(arguments[0]) == 0 {
+					arguments = arguments[1:]
 					n++
 				}
-				if len(s) == 0 || s[0][0] != ',' {
+				if len(arguments) == 0 || arguments[0][0] != ',' {
 					break
-				} else if len(s[0]) == 1 {
-					s = s[1:]
+				} else if len(arguments[0]) == 1 {
+					arguments = arguments[1:]
 					n++
 				} else {
-					s[0] = s[0][1:]
+					arguments[0] = arguments[0][1:]
 				}
 			}
 
 			// consume value
 			var sVal []string
-			if len(s) == 0 {
-				if !comma || j == 0 {
+			if len(arguments) == 0 {
+				if j == 0 {
 					break
 				}
 				// empty value after final comma
 				sVal = []string{""}
-			} else if 0 < len(s[0]) && (s[0][0] == '{' || s[0][0] == '[') {
-				if comma {
-					return 0, fmt.Errorf("%v index %v: invalid value", typ, j)
-				}
-				sVal, s, split = truncEnd(s)
-				if sVal == nil || split {
-					return 0, fmt.Errorf("%v index %v: invalid value", typ, j)
-				}
-			} else if idx := strings.IndexByte(s[0], ','); idx != -1 && comma {
-				sVal = []string{s[0][:idx]}
-				s[0] = s[0][idx:]
+			} else if idx := strings.IndexByte(arguments[0], ','); idx != -1 {
+				sVal = []string{arguments[0][:idx]}
+				arguments[0] = arguments[0][idx:]
 			} else {
-				sVal = []string{s[0]}
-				s = s[1:]
-				if comma {
-					n++
-				}
+				sVal = []string{arguments[0]}
+				arguments = arguments[1:]
+				n++
 			}
 			val := reflect.New(v.Type().Elem()).Elem()
 			if _, err := scanValue(val, sVal); err != nil {
@@ -1037,148 +805,12 @@ func scanValue(v reflect.Value, s []string) (int, error) {
 		} else {
 			v.Set(slice)
 		}
-	case reflect.Map:
-		var split bool
-		if len(s[0]) == 0 {
-			return 1, nil
-		} else if s[0][0] != '{' {
-			return 0, fmt.Errorf("invalid map")
-		} else if s, _, split = truncEnd(s); s == nil || split {
-			return 0, fmt.Errorf("invalid map")
-		}
-		n = len(s)
-		if len(s[0]) == 1 {
-			s = s[1:]
-		} else {
-			s[0] = s[0][1:]
-		}
-		if len(s[len(s)-1]) == 1 {
-			s = s[:len(s)-1]
-		} else {
-			s[len(s)-1] = s[len(s)-1][:len(s[len(s)-1])-1]
-		}
-
-		for 0 < len(s) {
-			// consume key
-			var sKey []string
-			if 0 < len(s[0]) && (s[0][0] == '{' || s[0][0] == '[') {
-				sKey, s, split = truncEnd(s)
-				if sKey == nil {
-					return 0, fmt.Errorf("invalid map key")
-				} else if len(s) == 0 || len(s[0]) == 0 || s[0][0] != ':' {
-					return 0, fmt.Errorf("map key %v: missing semicolon", strings.Join(sKey, " "))
-				}
-				if len(s[0]) == 1 {
-					s = s[1:]
-				} else {
-					s[0] = s[0][1:]
-				}
-			} else if idx := strings.IndexByte(s[0], ':'); idx == -1 {
-				sKey = []string{s[0]}
-				s = s[1:]
-				for 0 < len(s) && len(s[0]) == 0 {
-					s = s[1:]
-				}
-				if len(s) == 0 {
-					break
-				} else if s[0][0] != ':' {
-					return 0, fmt.Errorf("map key %v: missing semicolon", strings.Join(sKey, " "))
-				} else if len(s[0]) == 1 {
-					s = s[1:]
-				} else {
-					s[0] = s[0][1:]
-				}
-			} else {
-				sKey = []string{s[0][:idx]}
-				s[0] = s[0][idx+1:]
-			}
-			key := reflect.New(v.Type().Key()).Elem()
-			if _, err := scanValue(key, sKey); err != nil {
-				return 0, fmt.Errorf("map key %v: %v", strings.Join(sKey, " "), err)
-			}
-
-			// consume value
-			index := strings.Join(sKey, " ")
-			var sVal []string
-			if len(s) == 0 {
-				// empty value after semicolon
-				sVal = []string{""}
-			} else if 0 < len(s[0]) && (s[0][0] == '{' || s[0][0] == '[') {
-				sVal, s, split = truncEnd(s)
-				if sVal == nil || split {
-					return 0, fmt.Errorf("map key %v: invalid value", index)
-				}
-			} else if idx := strings.IndexByte(s[0], ','); idx != -1 {
-				sVal = []string{s[0][:idx]}
-				s[0] = s[0][idx+1:]
-			} else {
-				sVal = []string{s[0]}
-				s = s[1:]
-			}
-			val := reflect.New(v.Type().Elem()).Elem()
-			if _, err := scanValue(val, sVal); err != nil {
-				return 0, fmt.Errorf("map key %v: %v", index, err)
-			}
-
-			if v.IsNil() {
-				v.Set(reflect.MakeMap(v.Type()))
-			}
-			v.SetMapIndex(key, val)
-		}
-	case reflect.Struct:
-		var split bool
-		if len(s[0]) == 0 {
-			return 1, nil
-		} else if s[0][0] != '{' {
-			return 0, fmt.Errorf("invalid struct")
-		} else if s, _, split = truncEnd(s); s == nil || split {
-			return 0, fmt.Errorf("invalid struct")
-		}
-		n = len(s)
-		if len(s[0]) == 1 {
-			s = s[1:]
-		} else {
-			s[0] = s[0][1:]
-		}
-		if len(s[len(s)-1]) == 1 {
-			s = s[:len(s)-1]
-		} else {
-			s[len(s)-1] = s[len(s)-1][:len(s[len(s)-1])-1]
-		}
-
-		j := 0
-		for j < v.NumField() {
-			// consume value
-			field := v.Type().Field(j).Name
-			for 0 < len(s) && len(s[0]) == 0 {
-				s = s[1:]
-			}
-			if len(s) == 0 {
-				break
-			}
-			var sVal []string
-			if s[0][0] == '{' || s[0][0] == '[' {
-				sVal, s, split = truncEnd(s)
-				if sVal == nil || split {
-					return 0, fmt.Errorf("struct field %v: invalid value", field)
-				}
-			} else {
-				sVal = []string{s[0]}
-				s = s[1:]
-			}
-			if _, err := scanValue(v.Field(j), sVal); err != nil {
-				return 0, fmt.Errorf("struct field %v: %v", field, err)
-			}
-			j++
-		}
-		if j != v.NumField() {
-			return 0, fmt.Errorf("missing struct fields")
-		} else if len(s) != 0 {
-			return 0, fmt.Errorf("too many struct fields")
-		}
 	default:
-		panic(fmt.Sprintf("unsupported type %v", v.Type())) // should never happen
+		return n, motmedelErrors.NewWithTrace(
+			fmt.Errorf("%w: %v", argpErrors.ErrUnexpectedKind, kind),
+		)
 	}
+
 	return n, nil
 }
 
@@ -1192,10 +824,10 @@ func isValidName(s string) bool {
 	return true
 }
 
-// isValidType returns true if the destination variable type is supported. Either it implements the Custom interface, or is a valid base type.
+// isValidType returns true if the destination variable type is supported. Either it implements the ArgumentScanner interface, or is a valid base type.
 func isValidType(t reflect.Type) bool {
-	if t.Implements(reflect.TypeOf((*Custom)(nil)).Elem()) {
-		// implements Custom
+	if t.Implements(reflect.TypeOf((*ArgumentScanner)(nil)).Elem()) {
+		// implements ArgumentScanner
 		return true
 	}
 	return isValidBaseType(t)
@@ -1210,7 +842,7 @@ func isValidBaseType(t reflect.Type) bool {
 	case reflect.Map:
 		return isValidBaseType(t.Key()) && isValidBaseType(t.Elem())
 	case reflect.Struct:
-		for i := 0; i < t.NumField(); i++ {
+		for i := range t.NumField() {
 			if !isValidBaseType(t.Field(i).Type) {
 				return false
 			}
@@ -1242,7 +874,7 @@ func TypeName(t reflect.Type) string {
 }
 
 // sortOption sorts options by short and then name.
-func sortOption(vars []*Var) func(int, int) bool {
+func sortOption(vars []*argpVariable.Variable) func(int, int) bool {
 	return func(i, j int) bool {
 		if vars[i].Short != 0 {
 			if vars[j].Short != 0 {
@@ -1258,7 +890,7 @@ func sortOption(vars []*Var) func(int, int) bool {
 }
 
 // sortArgument sorts arguments by index and then rest.
-func sortArgument(vars []*Var) func(int, int) bool {
+func sortArgument(vars []*argpVariable.Variable) func(int, int) bool {
 	return func(i, j int) bool {
 		if vars[i].Rest {
 			return false
@@ -1288,28 +920,12 @@ func fromFieldname(field string) string {
 	return string(name)
 }
 
-func toFieldname(name string) string {
-	field := make([]byte, 0, len(name))
-	capitalize := true
-	for _, r := range name {
-		if capitalize {
-			field = utf8.AppendRune(field, unicode.ToTitle(r))
-			capitalize = false
-		} else if r == '-' {
-			capitalize = true
-		} else {
-			field = utf8.AppendRune(field, r)
-		}
-	}
-	return string(field)
-}
-
 func splitArguments(s string) []string {
 	i := 0
 	var esc bool
 	var quote rune
 	arg := ""
-	args := []string{}
+	var args []string
 	for j, r := range s {
 		if r == '\\' {
 			if i < j {
