@@ -611,7 +611,8 @@ func (argp *Argp) parse(args []string) (*Argp, []string, error) {
 					v := argp.findShort(name)
 					if v == nil {
 						return argp, nil, motmedelErrors.NewWithTrace(
-							fmt.Errorf("%w: %v", argpErrors.ErrUnknownOption, name),
+							fmt.Errorf("%w: %s", argpErrors.ErrUnknownOption, string(name)),
+							name,
 						)
 					} else {
 						s := append([]string{arg[j:]}, args[i+1:]...)
